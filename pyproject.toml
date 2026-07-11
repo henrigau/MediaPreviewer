@@ -1,0 +1,9 @@
+[project]
+name = "media-preview"
+version = "0.1.0"
+description = "Quick Look-style media previews for Hyprland"
+requires-python = ">=3.11"
+
+[project.scripts]
+media-preview = "media_preview.cli:main"
+
