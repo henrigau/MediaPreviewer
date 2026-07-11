@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import csv
+import json
 import mimetypes
 import os
 import signal
+import shutil
+import socket
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import cairo
@@ -154,6 +158,36 @@ def load_css() -> None:
           padding: 10px;
           border-top: 1px solid rgba(255, 255, 255, 0.10);
         }
+        .audio-panel {
+          background: #151923;
+          border: 1px solid rgba(255, 255, 255, 0.10);
+          border-radius: 8px;
+          padding: 24px;
+          min-width: 520px;
+        }
+        .audio-cover {
+          background: #202734;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 8px;
+          min-height: 168px;
+        }
+        .audio-icon {
+          color: #8bd3ff;
+        }
+        .audio-play-button {
+          min-width: 44px;
+          min-height: 44px;
+          padding: 0;
+          border-radius: 8px;
+        }
+        .audio-time {
+          color: rgba(245, 247, 251, 0.68);
+          font-feature-settings: "tnum";
+          font-size: 12px;
+        }
+        .audio-slider {
+          min-width: 360px;
+        }
         .csv-grid {
           background: #10131a;
         }
@@ -235,6 +269,207 @@ class PdfPreview(Gtk.ScrolledWindow):
         self.set_child(pages)
 
 
+class AudioPreview(Gtk.Box):
+    def __init__(self, audio_path: Path) -> None:
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.audio_path = audio_path
+        self.tmpdir = tempfile.TemporaryDirectory(prefix="media-preview-audio-", dir="/tmp")
+        self.socket_path = Path(self.tmpdir.name) / "mpv.sock"
+        self.closed = False
+        self.duration = 0.0
+        self.updating = False
+        self.poll_id = 0
+
+        self.set_hexpand(True)
+        self.set_vexpand(True)
+        self.set_valign(Gtk.Align.CENTER)
+        self.set_halign(Gtk.Align.CENTER)
+
+        self.process = subprocess.Popen(
+            [
+                "mpv",
+                "--no-video",
+                "--force-window=no",
+                "--idle=yes",
+                "--keep-open=yes",
+                "--really-quiet",
+                f"--input-ipc-server={self.socket_path}",
+                "--",
+                str(self.audio_path),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        self._build_ui()
+        self.poll_id = GLib.timeout_add(250, self._poll)
+
+    def _build_ui(self) -> None:
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        panel.add_css_class("audio-panel")
+        panel.set_margin_top(32)
+        panel.set_margin_bottom(32)
+        panel.set_margin_start(32)
+        panel.set_margin_end(32)
+
+        cover = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        cover.add_css_class("audio-cover")
+        cover.set_hexpand(True)
+        cover.set_vexpand(False)
+        cover.set_valign(Gtk.Align.CENTER)
+        cover.set_halign(Gtk.Align.FILL)
+
+        icon = Gtk.Image.new_from_icon_name("audio-x-generic-symbolic")
+        icon.add_css_class("audio-icon")
+        icon.set_pixel_size(76)
+        icon.set_vexpand(True)
+        icon.set_valign(Gtk.Align.CENTER)
+        icon.set_halign(Gtk.Align.CENTER)
+        cover.append(icon)
+
+        title = Gtk.Label(label=self.audio_path.name)
+        title.add_css_class("title-2")
+        title.set_ellipsize(3)
+        title.set_xalign(0)
+
+        controls_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        controls_row.set_hexpand(True)
+
+        self.play_button = Gtk.Button()
+        self.play_button.add_css_class("audio-play-button")
+        self.play_button.set_tooltip_text("Play/Pause")
+        self.play_icon = Gtk.Image.new_from_icon_name("media-playback-pause-symbolic")
+        self.play_button.set_child(self.play_icon)
+        self.play_button.connect("clicked", self._toggle_pause)
+
+        self.scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 1)
+        self.scale.add_css_class("audio-slider")
+        self.scale.set_draw_value(False)
+        self.scale.set_hexpand(True)
+        self.scale.connect("change-value", self._seek)
+
+        self.time_label = Gtk.Label(label="0:00 / 0:00")
+        self.time_label.add_css_class("audio-time")
+        self.time_label.set_width_chars(14)
+        self.time_label.set_xalign(1)
+
+        controls_row.append(self.play_button)
+        controls_row.append(self.scale)
+        controls_row.append(self.time_label)
+
+        panel.append(cover)
+        panel.append(title)
+        panel.append(controls_row)
+        self.append(panel)
+
+    def _poll(self) -> bool:
+        if self.closed:
+            return False
+        if self.process.poll() is not None:
+            self.play_icon.set_from_icon_name("media-playback-start-symbolic")
+            return False
+
+        duration = self._get_property("duration")
+        position = self._get_property("time-pos")
+        paused = self._get_property("pause")
+
+        if isinstance(duration, (int, float)) and duration > 0:
+            self.duration = float(duration)
+            self.scale.set_range(0, max(1.0, self.duration))
+
+        if isinstance(position, (int, float)):
+            self.updating = True
+            self.scale.set_value(max(0.0, min(float(position), max(1.0, self.duration))))
+            self.updating = False
+        else:
+            position = 0.0
+
+        self.play_icon.set_from_icon_name(
+            "media-playback-start-symbolic" if paused is True else "media-playback-pause-symbolic"
+        )
+        self.time_label.set_label(f"{self._format_time(position)} / {self._format_time(self.duration)}")
+        return True
+
+    def _toggle_pause(self, _button: Gtk.Button) -> None:
+        paused = self._get_property("pause")
+        self._set_property("pause", not bool(paused))
+        self._poll()
+
+    def _seek(self, _scale: Gtk.Scale, _scroll_type: Gtk.ScrollType, value: float) -> bool:
+        if not self.updating and self.duration > 0:
+            self._command(["seek", max(0.0, min(value, self.duration)), "absolute"])
+        return False
+
+    def _get_property(self, name: str) -> object:
+        response = self._command(["get_property", name])
+        if response and response.get("error") == "success":
+            return response.get("data")
+        return None
+
+    def _set_property(self, name: str, value: object) -> None:
+        self._command(["set_property", name, value])
+
+    def _command(self, command: list[object], timeout: float = 0.35) -> dict[str, object] | None:
+        if self.closed or not self.socket_path.exists():
+            return None
+
+        deadline = time.monotonic() + timeout
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(timeout)
+                client.connect(str(self.socket_path))
+                client.sendall(json.dumps({"command": command}).encode("utf-8") + b"\n")
+
+                buffer = b""
+                while time.monotonic() < deadline:
+                    client.settimeout(max(0.01, deadline - time.monotonic()))
+                    chunk = client.recv(65536)
+                    if not chunk:
+                        break
+                    buffer += chunk
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        if not line.strip():
+                            continue
+                        try:
+                            response = json.loads(line.decode("utf-8"))
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            continue
+                        if isinstance(response, dict) and "error" in response:
+                            return response
+        except (OSError, TimeoutError):
+            return None
+        return None
+
+    @staticmethod
+    def _format_time(value: object) -> str:
+        if not isinstance(value, (int, float)) or value < 0:
+            value = 0
+        seconds = int(value)
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes}:{seconds:02d}"
+
+    def cleanup(self) -> None:
+        if self.closed:
+            return
+        if self.poll_id:
+            GLib.source_remove(self.poll_id)
+            self.poll_id = 0
+        self._command(["quit"])
+        self.closed = True
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=1)
+        self.tmpdir.cleanup()
+
+
 class PreviewWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application, path: Path) -> None:
         super().__init__(application=app)
@@ -242,6 +477,7 @@ class PreviewWindow(Adw.ApplicationWindow):
         self.mime_type = guess_mime(path) if path.exists() else "missing"
         self.cleanups: list[object] = []
         self.released_app_hold = False
+        self.cleaned_up = False
 
         self.set_title(path.name)
         self.set_default_size(1100, 780)
@@ -315,6 +551,13 @@ class PreviewWindow(Adw.ApplicationWindow):
         return False
 
     def _on_close_request(self, _window: Gtk.Window) -> bool:
+        self.cleanup()
+        return False
+
+    def cleanup(self) -> None:
+        if self.cleaned_up:
+            return
+        self.cleaned_up = True
         for item in self.cleanups:
             cleanup = getattr(item, "cleanup", None)
             if callable(cleanup):
@@ -324,7 +567,6 @@ class PreviewWindow(Adw.ApplicationWindow):
         if app is not None and not self.released_app_hold:
             self.released_app_hold = True
             app.release()
-        return False
 
     def _build_content(self) -> Gtk.Widget:
         try:
@@ -334,8 +576,10 @@ class PreviewWindow(Adw.ApplicationWindow):
                 return self._status_widget("Directory preview is not supported", str(self.path))
             if self.mime_type.startswith("image/"):
                 return self._image_widget(self.path)
-            if self.mime_type.startswith(("video/", "audio/")):
+            if self.mime_type.startswith("video/"):
                 return self._video_widget(self.path)
+            if self.mime_type.startswith("audio/"):
+                return self._audio_widget(self.path)
             if self.mime_type == "application/pdf":
                 return self._pdf_widget(self.path)
             if self.path.suffix.lower() in OFFICE_EXTENSIONS:
@@ -376,6 +620,13 @@ class PreviewWindow(Adw.ApplicationWindow):
         box.set_vexpand(True)
         box.append(video)
         return box
+
+    def _audio_widget(self, path: Path) -> Gtk.Widget:
+        if shutil.which("mpv") is None:
+            return self._status_widget("Audio player unavailable", "Install mpv to preview audio files.")
+        player = AudioPreview(path)
+        self.cleanups.append(player)
+        return player
 
     def _pdf_widget(self, path: Path) -> Gtk.Widget:
         pdf = PdfPreview(path)
@@ -524,6 +775,11 @@ class PreviewApp(Adw.Application):
         self.window = PreviewWindow(self, self.path)
         self.window.present()
 
+    def do_shutdown(self) -> None:
+        if self.window is not None:
+            self.window.cleanup()
+        Adw.Application.do_shutdown(self)
+
 
 def run_preview(path: Path) -> int:
     existing_pid = current_preview_pid()
@@ -533,6 +789,8 @@ def run_preview(path: Path) -> int:
     app = PreviewApp(path)
 
     def terminate(_signum: int, _frame: object) -> None:
+        if app.window is not None:
+            app.window.cleanup()
         app.quit()
 
     signal.signal(signal.SIGTERM, terminate)
