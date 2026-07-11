@@ -366,18 +366,15 @@ class PreviewWindow(Adw.ApplicationWindow):
         video.set_media_stream(media)
         video.set_hexpand(True)
         video.set_vexpand(True)
+        if hasattr(video, "set_controls"):
+            video.set_controls(True)
         if hasattr(video, "set_autoplay"):
             video.set_autoplay(True)
-
-        controls = Gtk.MediaControls.new(media)
-        controls.add_css_class("media-controls")
-        controls.set_hexpand(True)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         box.set_hexpand(True)
         box.set_vexpand(True)
         box.append(video)
-        box.append(controls)
         return box
 
     def _pdf_widget(self, path: Path) -> Gtk.Widget:
