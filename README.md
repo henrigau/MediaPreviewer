@@ -2,7 +2,7 @@
 
 Quick Look-style previews for Hyprland on CachyOS.
 
-The app opens a floating preview for the selected file when `Space` is pressed in a supported file manager, then closes it when `Space` is pressed again. Outside supported file managers, the same global `Space` bind passes the key through to the active window.
+Current behavior: press `Space` twice on a selected file in a supported file manager to open a floating preview. Press `Space` once while the preview is open to close it. Outside supported file managers, the global `Space` bind passes the key through to the active window.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ media-preview smart-space
 media-preview close
 ```
 
-`smart-space` is what Hyprland binds to plain `Space`. It toggles the preview in supported file managers and passes a normal Space key to other applications.
+`smart-space` is what Hyprland binds to plain `Space`. Due to Wayland/file-manager clipboard timing, opening from a file manager currently needs two Space presses. Closing an already open preview needs one Space press.
 
 ## Preview Features
 
@@ -53,7 +53,7 @@ media-preview close
 
 ## Supported File Managers
 
-The daemon enables plain `Space` only for active windows whose class matches:
+Preview opening is supported for active windows whose class matches:
 
 - Nemo
 - Dolphin
@@ -65,6 +65,6 @@ Set `MEDIA_PREVIEW_FILE_MANAGERS` to a comma-separated class list to override th
 
 ## Notes
 
-Wayland has no universal API for "the selected file in the active file manager". This implementation uses a practical cross-file-manager strategy: temporarily sends `Ctrl+C` with `ydotool`, reads the copied file URI from the Wayland clipboard, then restores the previous clipboard content. The capture path retries copy a few times within one `Space` press to handle slower file-manager clipboard updates.
+Wayland has no universal API for "the selected file in the active file manager". This implementation uses a practical cross-file-manager strategy: temporarily sends `Ctrl+C` with `ydotool`, reads the copied file URI from the Wayland clipboard, then restores the previous clipboard content. On the tested Nemo/Hyprland setup, the first Space often only primes the file-manager clipboard selection; the second Space opens the preview.
 
 Hyprland's `sendshortcut` dispatcher is used for pass-through Space behavior outside file managers.
