@@ -10,6 +10,7 @@ SERVICE_FILE="$SYSTEMD_USER_DIR/media-preview-daemon.service"
 HYPR_USER_DIR="$HOME/.config/hypr/UserConfigs"
 HYPR_STARTUP="$HYPR_USER_DIR/Startup_Apps.conf"
 HYPR_RULES="$HYPR_USER_DIR/WindowRules.conf"
+HYPR_KEYBINDS="$HYPR_USER_DIR/UserKeybinds.conf"
 
 mkdir -p "$BIN_DIR" "$SYSTEMD_USER_DIR" "$HYPR_USER_DIR"
 
@@ -36,7 +37,7 @@ RestartSec=1
 WantedBy=default.target
 EOF
 
-touch "$HYPR_STARTUP" "$HYPR_RULES"
+touch "$HYPR_STARTUP" "$HYPR_RULES" "$HYPR_KEYBINDS"
 
 replace_managed_block() {
   local file="$1"
@@ -54,9 +55,25 @@ replace_managed_block() {
   mv "$tmp" "$file"
 }
 
-replace_managed_block "$HYPR_STARTUP" '# BEGIN Media Preview
-exec-once = systemctl --user import-environment HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR && systemctl --user start media-preview-daemon.service
-# END Media Preview'
+remove_managed_block() {
+  local file="$1"
+  local tmp
+  tmp="$(mktemp)"
+
+  awk '
+    /# BEGIN Media Preview/ {skip=1; next}
+    /# END Media Preview/ {skip=0; next}
+    skip != 1 {print}
+  ' "$file" > "$tmp"
+
+  mv "$tmp" "$file"
+}
+
+remove_managed_block "$HYPR_STARTUP"
+
+replace_managed_block "$HYPR_KEYBINDS" "# BEGIN Media Preview
+bind = , SPACE, exec, $WRAPPER smart-space
+# END Media Preview"
 
 replace_managed_block "$HYPR_RULES" '# BEGIN Media Preview
 windowrule = match:class ^(io.github.henri.MediaPreview)$, float on, center on, size 70% 75%, pin on
@@ -64,7 +81,7 @@ windowrule = match:class ^(io.github.henri.MediaPreview)$, float on, center on, 
 
 systemctl --user import-environment HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_RUNTIME_DIR || true
 systemctl --user daemon-reload
-systemctl --user enable --now media-preview-daemon.service
+systemctl --user disable --now media-preview-daemon.service >/dev/null 2>&1 || true
 
 if command -v hyprctl >/dev/null 2>&1; then
   hyprctl reload >/dev/null 2>&1 || true

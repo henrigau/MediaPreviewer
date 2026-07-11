@@ -21,7 +21,7 @@ gi.require_version("Poppler", "0.18")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Poppler  # noqa: E402
 
 from .config import APP_ID, APP_NAME
-from .state import clear_preview_pid, write_preview_pid
+from .state import clear_preview_pid, close_preview, current_preview_pid, write_preview_pid
 
 OFFICE_EXTENSIONS = {
     ".doc",
@@ -103,7 +103,7 @@ def load_css() -> None:
         }
         .topbar {
           background: linear-gradient(135deg, #151923, #11151d);
-          padding: 10px 12px;
+          padding: 12px 14px;
           border-bottom: 1px solid rgba(255, 255, 255, 0.09);
         }
         .close-button {
@@ -120,10 +120,19 @@ def load_css() -> None:
         }
         .filename {
           font-weight: 700;
-          font-size: 15px;
+          font-size: 16px;
         }
         .muted {
           color: rgba(245, 247, 251, 0.62);
+        }
+        .type-badge {
+          background: rgba(96, 165, 250, 0.18);
+          color: #bfdbfe;
+          border: 1px solid rgba(96, 165, 250, 0.30);
+          border-radius: 999px;
+          padding: 3px 9px;
+          font-size: 11px;
+          font-weight: 700;
         }
         .content {
           background: #0f1115;
@@ -247,13 +256,24 @@ class PreviewWindow(Adw.ApplicationWindow):
 
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         title_box.set_hexpand(True)
+        title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        title_row.set_hexpand(True)
+
         filename = Gtk.Label(label=path.name, xalign=0)
         filename.add_css_class("filename")
         filename.set_ellipsize(3)
-        meta = Gtk.Label(label=f"{self.mime_type} · {format_size(path)}", xalign=0)
+        filename.set_hexpand(True)
+
+        type_badge = Gtk.Label(label=self._display_type())
+        type_badge.add_css_class("type-badge")
+
+        title_row.append(filename)
+        title_row.append(type_badge)
+
+        meta = Gtk.Label(label=f"{format_size(path)} · {path.parent}", xalign=0)
         meta.add_css_class("muted")
         meta.set_ellipsize(3)
-        title_box.append(filename)
+        title_box.append(title_row)
         title_box.append(meta)
 
         close_button = Gtk.Button()
@@ -280,6 +300,13 @@ class PreviewWindow(Adw.ApplicationWindow):
         key_controller.connect("key-pressed", self._on_key_pressed)
         self.add_controller(key_controller)
         self.connect("close-request", self._on_close_request)
+
+    def _display_type(self) -> str:
+        if self.path.suffix:
+            return self.path.suffix.lstrip(".").upper()
+        if "/" in self.mime_type:
+            return self.mime_type.split("/", 1)[1].upper()
+        return self.mime_type.upper()
 
     def _on_key_pressed(self, _controller: Gtk.EventControllerKey, keyval: int, _keycode: int, _state: Gdk.ModifierType) -> bool:
         if keyval in (Gdk.KEY_Escape, Gdk.KEY_space):
@@ -502,6 +529,10 @@ class PreviewApp(Adw.Application):
 
 
 def run_preview(path: Path) -> int:
+    existing_pid = current_preview_pid()
+    if existing_pid is not None and existing_pid != os.getpid():
+        close_preview()
+
     app = PreviewApp(path)
 
     def terminate(_signum: int, _frame: object) -> None:

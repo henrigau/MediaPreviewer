@@ -5,6 +5,7 @@ WRAPPER="$HOME/.local/bin/media-preview"
 SERVICE_FILE="$HOME/.config/systemd/user/media-preview-daemon.service"
 HYPR_STARTUP="$HOME/.config/hypr/UserConfigs/Startup_Apps.conf"
 HYPR_RULES="$HOME/.config/hypr/UserConfigs/WindowRules.conf"
+HYPR_KEYBINDS="$HOME/.config/hypr/UserConfigs/UserKeybinds.conf"
 
 systemctl --user disable --now media-preview-daemon.service >/dev/null 2>&1 || true
 rm -f "$SERVICE_FILE" "$WRAPPER"
@@ -24,6 +25,7 @@ remove_block() {
 
 remove_block "$HYPR_STARTUP"
 remove_block "$HYPR_RULES"
+remove_block "$HYPR_KEYBINDS"
 
 if command -v hyprctl >/dev/null 2>&1; then
   hyprctl keyword unbind ", SPACE" >/dev/null 2>&1 || true
@@ -31,4 +33,3 @@ if command -v hyprctl >/dev/null 2>&1; then
 fi
 
 echo "Media Preview uninstalled."
-

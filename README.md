@@ -2,7 +2,7 @@
 
 Quick Look-style previews for Hyprland on CachyOS.
 
-The app opens a floating preview for the selected file when `Space` is pressed in a supported file manager, then closes it when `Space` is pressed again.
+The app opens a floating preview for the selected file when `Space` is pressed in a supported file manager, then closes it when `Space` is pressed again. Outside supported file managers, the same global `Space` bind passes the key through to the active window.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ If `ydotool` reports a socket permission problem, log out and back in so the new
 ./scripts/install.sh
 ```
 
-The installer creates `~/.local/bin/media-preview`, installs a user systemd service for the Hyprland watcher, and appends managed Hyprland config blocks under `~/.config/hypr/UserConfigs`.
+The installer creates `~/.local/bin/media-preview` and appends managed Hyprland config blocks under `~/.config/hypr/UserConfigs`.
 
 Reload Hyprland or log out and back in if your config does not auto-reload.
 
@@ -36,11 +36,11 @@ Reload Hyprland or log out and back in if your config does not auto-reload.
 ```sh
 media-preview show ~/Pictures/example.png
 media-preview toggle-selected
+media-preview smart-space
 media-preview close
-media-preview daemon
 ```
 
-`toggle-selected` is what the Hyprland daemon binds to plain `Space` while a supported file manager is active.
+`smart-space` is what Hyprland binds to plain `Space`. It toggles the preview in supported file managers and passes a normal Space key to other applications.
 
 ## Preview Features
 
@@ -66,3 +66,5 @@ Set `MEDIA_PREVIEW_FILE_MANAGERS` to a comma-separated class list to override th
 ## Notes
 
 Wayland has no universal API for "the selected file in the active file manager". This implementation uses a practical cross-file-manager strategy: temporarily sends `Ctrl+C` with `ydotool`, reads the copied file URI from the Wayland clipboard, then restores the previous clipboard content. The capture path retries copy a few times within one `Space` press to handle slower file-manager clipboard updates.
+
+Hyprland's `sendshortcut` dispatcher is used for pass-through Space behavior outside file managers.

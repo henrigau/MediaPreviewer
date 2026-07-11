@@ -13,6 +13,9 @@ from .state import close_preview, current_preview_pid, write_preview_pid
 
 
 def spawn_preview(path: Path) -> int:
+    if current_preview_pid() is not None:
+        close_preview()
+
     process = subprocess.Popen(
         [sys.executable, "-m", "media_preview", "show", str(path)],
         stdout=subprocess.DEVNULL,
@@ -44,6 +47,29 @@ def toggle_selected() -> int:
     return spawn_preview(paths[0])
 
 
+def pass_space_to_active_window() -> int:
+    from .hyprland import run_hyprctl
+
+    result = run_hyprctl(["dispatch", "sendshortcut", ", SPACE, activewindow"])
+    return 0 if result.returncode == 0 else 1
+
+
+def smart_space() -> int:
+    if current_preview_pid() is not None:
+        close_preview()
+        return 0
+
+    from .config import PREVIEW_WINDOW_CLASSES, file_manager_classes
+    from .hyprland import active_window_class
+
+    window_class = active_window_class()
+    supported_classes = file_manager_classes() | PREVIEW_WINDOW_CLASSES
+    if window_class in supported_classes:
+        return toggle_selected()
+
+    return pass_space_to_active_window()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="media-preview")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -53,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     show_parser.add_argument("path")
 
     subparsers.add_parser("toggle-selected", help="toggle preview for the selected file")
+    subparsers.add_parser("smart-space", help="toggle preview in file managers, otherwise pass Space through")
     subparsers.add_parser("close", help="close the active preview")
     subparsers.add_parser("daemon", help="watch Hyprland focus and dynamically bind Space")
     return parser
@@ -69,6 +96,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "toggle-selected":
         return toggle_selected()
+
+    if args.command == "smart-space":
+        return smart_space()
 
     if args.command == "close":
         return 0 if close_preview() else 1
