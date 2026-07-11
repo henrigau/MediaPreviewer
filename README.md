@@ -46,7 +46,7 @@ media-preview close
 
 - PDFs and converted Office documents open as continuous scrollable documents.
 - Videos use native GTK/GStreamer playback controls with seeking.
-- MP3 and other audio files open in an `mpv`-backed player with play/pause and seeking.
+- MP3 and other audio files open in an `mpv`-backed player with play/pause, volume, and seeking.
 - Images scale to the preview window.
 - CSV files open as a scrollable table.
 - Text/code files open in a scrollable read-only monospace viewer.

@@ -158,21 +158,19 @@ def load_css() -> None:
           padding: 10px;
           border-top: 1px solid rgba(255, 255, 255, 0.10);
         }
-        .audio-panel {
-          background: #151923;
-          border: 1px solid rgba(255, 255, 255, 0.10);
-          border-radius: 8px;
-          padding: 24px;
-          min-width: 520px;
+        .audio-view {
+          padding: 44px 56px;
+          background: linear-gradient(180deg, #11151d, #0f1115);
         }
-        .audio-cover {
-          background: #202734;
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 8px;
-          min-height: 168px;
+        .audio-layout {
+          min-width: 620px;
         }
         .audio-icon {
           color: #8bd3ff;
+        }
+        .audio-title {
+          font-size: 22px;
+          font-weight: 700;
         }
         .audio-play-button {
           min-width: 44px;
@@ -187,6 +185,12 @@ def load_css() -> None:
         }
         .audio-slider {
           min-width: 360px;
+        }
+        .audio-volume-slider {
+          min-width: 118px;
+        }
+        .audio-volume-icon {
+          color: rgba(245, 247, 251, 0.68);
         }
         .csv-grid {
           background: #10131a;
@@ -278,12 +282,14 @@ class AudioPreview(Gtk.Box):
         self.closed = False
         self.duration = 0.0
         self.updating = False
+        self.updating_volume = False
         self.poll_id = 0
 
+        self.add_css_class("audio-view")
         self.set_hexpand(True)
         self.set_vexpand(True)
-        self.set_valign(Gtk.Align.CENTER)
-        self.set_halign(Gtk.Align.CENTER)
+        self.set_valign(Gtk.Align.FILL)
+        self.set_halign(Gtk.Align.FILL)
 
         self.process = subprocess.Popen(
             [
@@ -305,32 +311,25 @@ class AudioPreview(Gtk.Box):
         self.poll_id = GLib.timeout_add(250, self._poll)
 
     def _build_ui(self) -> None:
-        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        panel.add_css_class("audio-panel")
-        panel.set_margin_top(32)
-        panel.set_margin_bottom(32)
-        panel.set_margin_start(32)
-        panel.set_margin_end(32)
-
-        cover = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        cover.add_css_class("audio-cover")
-        cover.set_hexpand(True)
-        cover.set_vexpand(False)
-        cover.set_valign(Gtk.Align.CENTER)
-        cover.set_halign(Gtk.Align.FILL)
+        layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=22)
+        layout.add_css_class("audio-layout")
+        layout.set_halign(Gtk.Align.CENTER)
+        layout.set_valign(Gtk.Align.CENTER)
+        layout.set_hexpand(True)
+        layout.set_vexpand(True)
 
         icon = Gtk.Image.new_from_icon_name("audio-x-generic-symbolic")
         icon.add_css_class("audio-icon")
-        icon.set_pixel_size(76)
-        icon.set_vexpand(True)
+        icon.set_pixel_size(96)
         icon.set_valign(Gtk.Align.CENTER)
         icon.set_halign(Gtk.Align.CENTER)
-        cover.append(icon)
 
         title = Gtk.Label(label=self.audio_path.name)
-        title.add_css_class("title-2")
+        title.add_css_class("audio-title")
         title.set_ellipsize(3)
-        title.set_xalign(0)
+        title.set_xalign(0.5)
+        title.set_justify(Gtk.Justification.CENTER)
+        title.set_max_width_chars(52)
 
         controls_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         controls_row.set_hexpand(True)
@@ -353,14 +352,26 @@ class AudioPreview(Gtk.Box):
         self.time_label.set_width_chars(14)
         self.time_label.set_xalign(1)
 
+        volume_icon = Gtk.Image.new_from_icon_name("audio-volume-high-symbolic")
+        volume_icon.add_css_class("audio-volume-icon")
+        volume_icon.set_pixel_size(18)
+
+        self.volume_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.volume_scale.add_css_class("audio-volume-slider")
+        self.volume_scale.set_draw_value(False)
+        self.volume_scale.set_value(100)
+        self.volume_scale.connect("change-value", self._change_volume)
+
         controls_row.append(self.play_button)
         controls_row.append(self.scale)
         controls_row.append(self.time_label)
+        controls_row.append(volume_icon)
+        controls_row.append(self.volume_scale)
 
-        panel.append(cover)
-        panel.append(title)
-        panel.append(controls_row)
-        self.append(panel)
+        layout.append(icon)
+        layout.append(title)
+        layout.append(controls_row)
+        self.append(layout)
 
     def _poll(self) -> bool:
         if self.closed:
@@ -372,6 +383,7 @@ class AudioPreview(Gtk.Box):
         duration = self._get_property("duration")
         position = self._get_property("time-pos")
         paused = self._get_property("pause")
+        volume = self._get_property("volume")
 
         if isinstance(duration, (int, float)) and duration > 0:
             self.duration = float(duration)
@@ -387,6 +399,10 @@ class AudioPreview(Gtk.Box):
         self.play_icon.set_from_icon_name(
             "media-playback-start-symbolic" if paused is True else "media-playback-pause-symbolic"
         )
+        if isinstance(volume, (int, float)):
+            self.updating_volume = True
+            self.volume_scale.set_value(max(0.0, min(float(volume), 100.0)))
+            self.updating_volume = False
         self.time_label.set_label(f"{self._format_time(position)} / {self._format_time(self.duration)}")
         return True
 
@@ -398,6 +414,11 @@ class AudioPreview(Gtk.Box):
     def _seek(self, _scale: Gtk.Scale, _scroll_type: Gtk.ScrollType, value: float) -> bool:
         if not self.updating and self.duration > 0:
             self._command(["seek", max(0.0, min(value, self.duration)), "absolute"])
+        return False
+
+    def _change_volume(self, _scale: Gtk.Scale, _scroll_type: Gtk.ScrollType, value: float) -> bool:
+        if not self.updating_volume:
+            self._set_property("volume", max(0.0, min(value, 100.0)))
         return False
 
     def _get_property(self, name: str) -> object:
